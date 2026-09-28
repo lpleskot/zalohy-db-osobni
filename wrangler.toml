@@ -1,0 +1,39 @@
+# zalohy-db — centrální noční záloha všech D1 databází osobního účtu (lukas.pleskot@chrudim.cz)
+# do R2 (bucket d1-zalohy). Kopie plegi-cz/zalohy-db, liší se jen tímto souborem a README.
+# Nasazení: Workers Builds (Git integrace), npx wrangler deploy při každém pushi do main.
+# Založení (bucket, API token, secrets), ověření a obnova ze zálohy: README.md.
+name = "zalohy-db"
+account_id = "20091577c7377c278960a1808ca175ba"  # osobní účet
+main = "src/index.js"
+compatibility_date = "2026-08-15"
+# workers.dev jen kvůli ručnímu spuštění, stavu a testovacímu e-mailu — vše za SPRAVA_TOKEN
+workers_dev = true
+preview_urls = false
+
+# Tři noční pokusy v UTC (v Praze 2:17–4:17 v létě, 1:17–3:17 v zimě). První zálohuje vše,
+# další dva jen dorovnají, co chybí. Po posledním pokusu (POSLEDNI_POKUS v src/index.js)
+# přijde e-mail, když některé databázi dnešní záloha pořád chybí. Při změně časů upravit i tam.
+[triggers]
+crons = ["17 0 * * *", "17 1 * * *", "17 2 * * *"]
+
+# Ruční POST /zalohovat přes HTTP má jinak jen 30 s CPU a gzip největší databáze (na PLEGI přes 160 MB)
+# se do toho nemusí vejít. Čekání na export a stahování se do CPU nepočítá.
+[limits]
+cpu_ms = 300000
+
+[[r2_buckets]]
+binding = "ZALOHY"
+bucket_name = "d1-zalohy"  # EEUR; starší .sql z workeru todo retence navazuje
+
+[observability]
+enabled = true
+
+[vars]
+CF_ACCOUNT_ID = "20091577c7377c278960a1808ca175ba"
+EMAIL_TO = "pleskot@plegi.cz"
+EMAIL_FROM = "Zálohy DB <zalohy@plegi.cz>"
+# Secrets (Worker → Settings → Variables and Secrets, nebo npx wrangler secret put …):
+#   CF_API_TOKEN    — API token jen s oprávněním Account → D1 → Edit (výpis databází a export)
+#   RESEND_API_KEY  — e-mail při selhání; doména odesílatele EMAIL_FROM musí být ověřená v Resend
+#   SPRAVA_TOKEN    — ruční spuštění, stav a testovací e-mail (Bearer nebo ?token=); bez něj vypnuté
+

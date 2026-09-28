@@ -1,0 +1,9 @@
+# Závislosti a lokální stav wrangleru
+node_modules/
+.wrangler/
+
+# Lokální secrets pro wrangler dev
+.dev.vars
+
+# macOS
+.DS_Store
