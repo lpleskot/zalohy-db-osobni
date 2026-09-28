@@ -1,8 +1,8 @@
-# zalohy-db — centrální noční záloha všech D1 databází osobního účtu (lukas.pleskot@chrudim.cz)
+# zalohy-db-osobni — centrální noční záloha všech D1 databází osobního účtu (lukas.pleskot@chrudim.cz)
 # do R2 (bucket d1-zalohy). Kopie plegi-cz/zalohy-db, liší se jen tímto souborem a README.
 # Nasazení: Workers Builds (Git integrace), npx wrangler deploy při každém pushi do main.
 # Založení (bucket, API token, secrets), ověření a obnova ze zálohy: README.md.
-name = "zalohy-db"
+name = "zalohy-db-osobni"
 account_id = "20091577c7377c278960a1808ca175ba"  # osobní účet
 main = "src/index.js"
 compatibility_date = "2026-08-15"

@@ -1,4 +1,4 @@
-# zalohy-db
+# zalohy-db-osobni
 
 Centrální noční záloha všech D1 databází **osobního** účtu Cloudflare (lukas.pleskot@chrudim.cz)
 do R2. Kopie `plegi-cz/zalohy-db` — liší se jen `wrangler.toml` (účet, bucket `d1-zalohy`)
@@ -36,7 +36,7 @@ d1-zalohy/                         bucket (EEUR)
   nebo když selhal celý běh (např. neplatný token). Když je vše v pořádku, e-mail nechodí.
 - `_stav.json` v bucketu a `GET /stav` (pro monitoring, např. status.plegi.cz): `ok`, čas
   posledního běhu a databáze bez zálohy ze dneška nebo včerejška; při problému HTTP 503.
-- Logy: dashboard → Workers & Pages → zalohy-db → Logs.
+- Logy: dashboard → Workers & Pages → zalohy-db-osobni → Logs.
 - Během exportu databáze **neodpovídá na dotazy**, u malých databází jde o vteřiny. Proto se
   zálohuje v noci, jedna databáze po druhé a v minutě :17, mimo crony projektů spouštěné
   každých 5 minut.
@@ -49,10 +49,10 @@ d1-zalohy/                         bucket (EEUR)
 2. **API token:** Manage Account → Account API Tokens → Create Token → Custom token. Název
    `zalohy-db`, oprávnění **Account → D1 → Edit**, nic dalšího. Account token nepatří
    konkrétnímu člověku, takže přežije i jeho odchod z účtu.
-3. **Worker:** Workers & Pages → Create → Import a repository → `lpleskot/zalohy-db`. Název
-   musí zůstat `zalohy-db` (sedí s `name` ve `wrangler.toml`). Deploy command
+3. **Worker:** Workers & Pages → Create → Import a repository → `lpleskot/zalohy-db-osobni`. Název
+   musí zůstat `zalohy-db-osobni` (sedí s `name` ve `wrangler.toml`). Deploy command
    `npx wrangler deploy`, produkční větev `main`.
-4. **Secrets:** Worker zalohy-db → Settings → Variables and Secrets → Add, typ *Secret*:
+4. **Secrets:** Worker zalohy-db-osobni → Settings → Variables and Secrets → Add, typ *Secret*:
    - `CF_API_TOKEN`: token z bodu 2,
    - `RESEND_API_KEY`: klíč z Resend (API Keys, stačí *Sending access*),
    - `SPRAVA_TOKEN`: dlouhý náhodný řetězec (např. `openssl rand -hex 32`), chrání ruční
@@ -64,10 +64,10 @@ d1-zalohy/                         bucket (EEUR)
 ## Ověření po nasazení
 
 Adresa workeru je v dashboardu: Worker → Settings → Domains & Routes
-(`zalohy-db.<subdoména>.workers.dev`).
+(`zalohy-db-osobni.<subdoména>.workers.dev`).
 
 ```sh
-URL=https://zalohy-db.<subdoména>.workers.dev
+URL=https://zalohy-db-osobni.<subdoména>.workers.dev
 T=<SPRAVA_TOKEN>
 curl -X POST -H "Authorization: Bearer $T" $URL/test-email   # přijde zkušební e-mail
 curl -X POST -H "Authorization: Bearer $T" $URL/zalohovat    # záloha hned, čeká se na doběhnutí
