@@ -7,7 +7,11 @@ export default defineConfig({
   plugins: [
     cloudflareTest({
       wrangler: { configPath: './wrangler.toml' },
-      miniflare: { bindings: { CF_API_TOKEN: 'test-cf-token', RESEND_API_KEY: 'test-resend', SPRAVA_TOKEN: 'test-sprava' } },
+      miniflare: {
+        bindings: { CF_API_TOKEN: 'test-cf-token', RESEND_API_KEY: 'test-resend', SPRAVA_TOKEN: 'test-sprava' },
+        /* Zdroj: databáze s fulltextem, kterou podvržené API čte; cíl: obnova ze zálohy. */
+        d1Databases: ['ZDROJ', 'CIL'],
+      },
     }),
   ],
 });

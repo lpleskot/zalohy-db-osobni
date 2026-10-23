@@ -3,6 +3,7 @@
    a stav do _stav.json. Nová databáze na účtu se tak zálohuje sama od první noci. */
 import { datumPraha, posunDen, kSmazani } from './retence.js';
 import { nahrajProud } from './nahrani.js';
+import { sqlDotazy, proudZTextu } from './dotazy.js';
 
 const API = 'https://api.cloudflare.com/client/v4';
 export const STAV_KLIC = '_stav.json';
@@ -56,21 +57,37 @@ async function exportuj(env, uuid, { pauzaMs = 1000, maxMs = 10 * 60_000 } = {})
   }
 }
 
-async function zalohujDatabazi(env, db, klic, moznosti) {
-  const odkaz = await exportuj(env, db.uuid, moznosti);
+/* Jeden dotaz přes API (/query); vrací řádky jako objekty. */
+async function cfDotaz(env, uuid, sql, params = []) {
+  const { result } = await cfApi(env, `/d1/database/${uuid}/query`, { sql, params });
+  return result?.[0]?.results ?? [];
+}
+
+async function stahniExport(env, uuid, moznosti) {
+  const odkaz = await exportuj(env, uuid, moznosti);
   const dump = await fetch(odkaz, { signal: AbortSignal.timeout(10 * 60_000) });
   if (!dump.ok || !dump.body) throw new Error(`Stažení exportu selhalo (HTTP ${dump.status}).`);
+  return dump.body;
+}
+
+/* Databázi s virtuální tabulkou (fulltext FTS5) D1 export odmítne celou — ta se zálohuje
+   dotazy (src/dotazy.js). Ostatní exportem, ten je rychlejší a je to snímek jednoho okamžiku. */
+async function zalohujDatabazi(env, db, klic, moznosti) {
+  const dotaz = (sql, params) => cfDotaz(env, db.uuid, sql, params);
+  const seznam = await dotaz('PRAGMA table_list');
+  const dotazy = seznam.some((t) => t.type === 'virtual');
+  const zdroj = dotazy ? proudZTextu(sqlDotazy(dotaz, seznam)) : await stahniExport(env, db.uuid, moznosti);
   let sql = 0;
   const pocitadlo = new TransformStream({
     transform(kus, ovladac) { sql += kus.byteLength; ovladac.enqueue(kus); },
   });
-  const proud = dump.body.pipeThrough(pocitadlo).pipeThrough(new CompressionStream('gzip'));
+  const proud = zdroj.pipeThrough(pocitadlo).pipeThrough(new CompressionStream('gzip'));
   const gz = await nahrajProud(env.ZALOHY, klic, proud, { contentType: 'application/gzip' });
   if (!sql) {
     await env.ZALOHY.delete(klic);
     throw new Error('Export je prázdný.');
   }
-  return { sql, gz };
+  return { sql, gz, ...(dotazy && { dotazy: true }) };
 }
 
 async function vypisZaloh(env, prefix) {
@@ -139,9 +156,9 @@ export async function zalohujVse(env, { ted = new Date(), znovu = false, pauzaMs
       continue;
     }
     try {
-      const { sql, gz } = await zalohujDatabazi(env, db, klic, { pauzaMs });
+      const zaloha = await zalohujDatabazi(env, db, klic, { pauzaMs });
       const smazano = await uklid(env, db.name, dnes);
-      vysledky.push({ db: db.name, ok: true, klic, sql, gz, smazano });
+      vysledky.push({ db: db.name, ok: true, klic, ...zaloha, smazano });
     } catch (err) {
       vysledky.push({ db: db.name, ok: false, chyba: String(err?.message ?? err) });
     }

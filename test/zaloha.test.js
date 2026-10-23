@@ -11,8 +11,8 @@ const db = (name) => ({ uuid: `uuid-${name}`, name, file_size: 1000 });
 /* Podvržené Cloudflare API, stažení exportu a Resend. `dumpy` a `chyby` podle názvu databáze.
    Export napoprvé hlásí „běží" a hotový je až při dotazu s bookmarkem (jako skutečné API),
    s `hnedHotovo` hned napoprvé. */
-function falesnyUcet({ databaze = [], dumpy = {}, chyby = {}, hnedHotovo = false, vypisChyba } = {}) {
-  const volani = { exporty: 0, emaily: [] };
+function falesnyUcet({ databaze = [], dumpy = {}, chyby = {}, dotazy = {}, hnedHotovo = false, vypisChyba } = {}) {
+  const volani = { exporty: 0, dotazy: 0, emaily: [] };
   const ok = (result, navic = {}, status = 200) => Response.json({ success: true, errors: [], messages: [], result, ...navic }, { status });
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (vstup, init = {}) => {
     const url = new URL(typeof vstup === 'string' ? vstup : vstup.url);
@@ -22,6 +22,14 @@ function falesnyUcet({ databaze = [], dumpy = {}, chyby = {}, hnedHotovo = false
       if (cesta === '/d1/database') {
         if (vypisChyba) return Response.json({ success: false, errors: [{ code: 10000, message: vypisChyba }] }, { status: 403 });
         return ok(databaze, { result_info: { page: 1, per_page: 100, count: databaze.length, total_count: databaze.length } });
+      }
+      const dotazNa = cesta.match(/^\/d1\/database\/uuid-(.+)\/query$/)?.[1];
+      if (dotazNa) {
+        /* Databáze z `dotazy` odpovídá skutečným SQLite (lokální D1), ostatní nemají virtuální tabulku. */
+        volani.dotazy++;
+        const { sql, params } = JSON.parse(init.body);
+        const results = dotazy[dotazNa] ? (await dotazy[dotazNa].prepare(sql).bind(...(params ?? [])).all()).results : [];
+        return ok([{ results, success: true, meta: {} }]);
       }
       const nazev = cesta.match(/^\/d1\/database\/uuid-(.+)\/export$/)?.[1];
       if (nazev) {
@@ -168,6 +176,128 @@ describe('záloha všech databází účtu', () => {
     const beh = await zalohujVse(env, { ted: DNES, pauzaMs: 0 });
     expect(beh.vysledky[0]).toEqual({ db: 'prazdna-db', ok: false, chyba: 'Export je prázdný.' });
     expect(await env.ZALOHY.head('prazdna-db/2026-09-27.sql.gz')).toBeNull();
+  });
+});
+
+/* Rozdělí SQL zálohy na příkazy jako `wrangler d1 execute --file`: středník mimo řetězce
+   a komentáře, u triggeru až za END (lokální D1 exec() dělí jen po řádcích). */
+function prikazy(sql) {
+  const vysledek = [];
+  let zacatek = 0;
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i];
+    if (c === "'" || c === '"') {
+      for (i++; i < sql.length && !(sql[i] === c && sql[i + 1] !== c); i += sql[i] === c ? 2 : 1);
+    } else if (c === '-' && sql[i + 1] === '-') {
+      i = sql.indexOf('\n', i);
+      if (i < 0) break;
+    } else if (c === ';') {
+      const prikaz = sql.slice(zacatek, i).trim();
+      const bezKomentaru = prikaz.replace(/^(--[^\n]*\n\s*)+/, '');
+      if (/^CREATE\s+TRIGGER\b/i.test(bezKomentaru) && !/\bEND$/i.test(prikaz)) continue;
+      if (bezKomentaru) vysledek.push(prikaz);
+      zacatek = i + 1;
+    }
+  }
+  return vysledek;
+}
+
+/* Databáze jako jezerka-db: fulltext s vlastním obsahem, fulltext nad tabulkou (externí obsah)
+   s triggerem, fulltext bez obsahu, AUTOINCREMENT, WITHOUT ROWID, generovaný sloupec, index,
+   pohled a hodnoty, které se přes JSON snadno pokazí (velké celé číslo, desetinné, blob). */
+const SCHEMA = [
+  `CREATE TABLE autori (id INTEGER PRIMARY KEY AUTOINCREMENT, jmeno TEXT NOT NULL, cislo INTEGER, kurz REAL, data BLOB, poznamka TEXT)`,
+  `CREATE TABLE stitky (kod TEXT PRIMARY KEY, nazev TEXT) WITHOUT ROWID`,
+  `CREATE TABLE clanky (id INTEGER PRIMARY KEY, autor_id INTEGER REFERENCES autori (id), titulek TEXT, text TEXT,
+     delka INTEGER GENERATED ALWAYS AS (length(text)) VIRTUAL)`,
+  `CREATE TABLE "objednávky-2026" ("select" TEXT, "a""b" INTEGER)`,
+  `CREATE INDEX clanky_autor ON clanky (autor_id)`,
+  `CREATE VIRTUAL TABLE hledani USING fts5(titulek, text, zdroj UNINDEXED, tokenize = 'unicode61 remove_diacritics 2')`,
+  `CREATE VIRTUAL TABLE clanky_fts USING fts5(titulek, text, content='clanky', content_rowid='id')`,
+  `CREATE VIRTUAL TABLE bez_obsahu USING fts5(t, content='')`,
+  `CREATE TRIGGER clanky_ai AFTER INSERT ON clanky BEGIN
+     INSERT INTO clanky_fts (rowid, titulek, text) VALUES (new.id, new.titulek, new.text);
+   END`,
+  `CREATE VIEW clanky_autoru AS SELECT a.jmeno, c.titulek FROM clanky c JOIN autori a ON a.id = c.autor_id`,
+];
+
+async function naplnZdroj() {
+  const d = env.ZDROJ;
+  await d.batch(SCHEMA.map((q) => d.prepare(q)));
+  await d.batch([
+    d.prepare(`INSERT INTO autori (jmeno, cislo, kurz, data, poznamka) VALUES ('Jiří Novák', 9007199254740993, 0.1 + 0.2, X'00FF10', 'O''Brien; řádek
+nový')`),
+    d.prepare(`INSERT INTO autori (jmeno) VALUES ('Anna')`),
+    d.prepare(`INSERT INTO autori (jmeno) VALUES ('smazaný')`),
+    d.prepare(`DELETE FROM autori WHERE jmeno = 'smazaný'`),
+    d.prepare(`INSERT INTO stitky VALUES ('b', 'Béčko'), ('a', 'Áčko')`),
+    d.prepare(`INSERT INTO clanky (id, autor_id, titulek, text) VALUES (1, 1, 'Žlutý kůň', 'úpěl ďábelské ódy'), (2, 2, 'Jezero', 'koupání; "uvozovky"')`),
+    d.prepare(`INSERT INTO "objednávky-2026" VALUES ('drop table', 7)`),
+    d.prepare(`INSERT INTO bez_obsahu (t) VALUES ('nic se nezálohuje')`),
+  ]);
+  /* 250 řádků fulltextu: víc stránek čtení */
+  const radky = Array.from({ length: 250 }, (_, i) => d.prepare(`INSERT INTO hledani (rowid, titulek, text, zdroj) VALUES (?, ?, ?, ?)`)
+    .bind(i * 3 + 1, `Stránka ${i}`, i % 50 === 0 ? 'žlutý kůň na jezeře' : `obsah ${i}`, `page:${i}:cs`));
+  await d.batch(radky);
+}
+
+const vsechno = async (d, sql) => (await d.prepare(sql).all()).results;
+
+describe('databáze s fulltextem (FTS5), kterou D1 export neumí', () => {
+  it('zazálohuje se dotazy a ze zálohy jde obnovit včetně fulltextu', async () => {
+    await naplnZdroj();
+    const ucet = falesnyUcet({
+      databaze: [db('jezerka-db')],
+      dotazy: { 'jezerka-db': env.ZDROJ },
+      chyby: { 'jezerka-db': 'D1 Export error: cannot export databases with virtual tables (like FTS5)' },
+    });
+
+    const beh = await zalohujVse(env, { ted: DNES, pauzaMs: 0 });
+
+    expect(beh.vysledky[0]).toMatchObject({ db: 'jezerka-db', ok: true, dotazy: true });
+    expect(ucet.exporty).toBe(0);
+    const sql = await text('jezerka-db/2026-09-27.sql.gz');
+    expect(sql).not.toMatch(/_cf_|hledani_data|hledani_idx|hledani_content|clanky_fts_data/);
+
+    await env.CIL.batch(prikazy(sql).map((q) => env.CIL.prepare(q)));
+
+    const autori = `SELECT id, jmeno, quote(cislo) AS cislo, quote(kurz) AS kurz, hex(data) AS data, poznamka FROM autori ORDER BY id`;
+    expect(await vsechno(env.CIL, autori)).toEqual(await vsechno(env.ZDROJ, autori));
+    expect((await vsechno(env.CIL, autori))[0]).toMatchObject({ cislo: '9007199254740993', data: '00FF10', poznamka: "O'Brien; řádek\nnový" });
+    for (const dotaz of [
+      'SELECT * FROM stitky',
+      'SELECT id, autor_id, titulek, text, delka FROM clanky ORDER BY id',
+      'SELECT * FROM "objednávky-2026"',
+      'SELECT * FROM clanky_autoru ORDER BY titulek',
+      'SELECT name, seq FROM sqlite_sequence',
+    ]) {
+      expect(await vsechno(env.CIL, dotaz)).toEqual(await vsechno(env.ZDROJ, dotaz));
+    }
+
+    /* fulltext s vlastním obsahem: všechny řádky i s rowid a funkční hledání bez diakritiky */
+    expect(await vsechno(env.CIL, 'SELECT count(*) AS n FROM hledani')).toEqual([{ n: 250 }]);
+    const najdi = `SELECT rowid, titulek, zdroj FROM hledani WHERE hledani MATCH 'zluty' ORDER BY rowid`;
+    expect(await vsechno(env.CIL, najdi)).toEqual(await vsechno(env.ZDROJ, najdi));
+    expect(await vsechno(env.CIL, najdi)).toHaveLength(5);
+    /* fulltext nad tabulkou: index přestavěný ('rebuild') a trigger obnovený až po datech */
+    const vClancich = `SELECT rowid FROM clanky_fts WHERE clanky_fts MATCH 'upel' ORDER BY rowid`;
+    expect(await vsechno(env.CIL, vClancich)).toEqual([{ rowid: 1 }]);
+    await env.CIL.prepare(`INSERT INTO clanky (id, autor_id, titulek, text) VALUES (3, 1, 'Nový', 'úpěl znovu')`).run();
+    expect(await vsechno(env.CIL, vClancich)).toEqual([{ rowid: 1 }, { rowid: 3 }]);
+    /* AUTOINCREMENT pokračuje za smazaným id 3 */
+    expect((await env.CIL.prepare(`INSERT INTO autori (jmeno) VALUES ('Nový') RETURNING id`).first()).id).toBe(4);
+    /* fulltext bez obsahu se založí prázdný, naplnit ho musí aplikace */
+    expect(sql).toContain("-- bez_obsahu: fulltext bez obsahu (content='')");
+    expect(await vsechno(env.CIL, 'SELECT count(*) AS n FROM bez_obsahu')).toEqual([{ n: 0 }]);
+    expect((await vsechno(env.CIL, `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'clanky_autor'`))).toHaveLength(1);
+  });
+
+  it('databáze bez virtuální tabulky dál jde exportem', async () => {
+    const ucet = falesnyUcet({ databaze: [db('a-db')], dumpy: { 'a-db': 'SQL' } });
+    const beh = await zalohujVse(env, { ted: DNES, pauzaMs: 0 });
+    expect(beh.vysledky[0]).toEqual(expect.not.objectContaining({ dotazy: true }));
+    expect(ucet.dotazy).toBe(1); /* jen PRAGMA table_list */
+    expect(ucet.exporty).toBe(2);
   });
 });
 

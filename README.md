@@ -40,8 +40,12 @@ d1-zalohy/                         bucket (EEUR)
 - Během exportu databáze **neodpovídá na dotazy**, u malých databází jde o vteřiny. Proto se
   zálohuje v noci, jedna databáze po druhé a v minutě :17, mimo crony projektů spouštěné
   každých 5 minut.
-- D1 neumí exportovat databázi s virtuální tabulkou (fulltext FTS5). Záloha takové databáze
-  selže a přijde e-mail. K 27. 9. 2026 žádná databáze na účtu virtuální tabulku nemá.
+- D1 neumí exportovat databázi s virtuální tabulkou (fulltext FTS5).
+  Takovou databázi worker pozná (`PRAGMA table_list`) a zazálohuje ji **dotazy přes API**:
+  schéma a data po stránkách, stejné SQL jako `sqlite3 .dump`. Fulltext se v záloze založí
+  znovu a naplní a obnovuje se stejně jako ostatní zálohy. Rozdíl je, že se tabulky čtou
+  postupně, záloha tedy není snímek jednoho okamžiku (v noci to nevadí). Fulltext bez obsahu
+  (`content=''`) zálohovat nejde, po obnově ho musí naplnit aplikace.
 
 ## Založení (jednou)
 
@@ -114,6 +118,7 @@ npm test   # vitest ve workerd s lokálním R2; Cloudflare API, export i Resend 
 
 - `src/index.js`: cron (tři pokusy, e-mail po posledním) a správa přes HTTP
 - `src/zaloha.js`: výpis databází, export s průběžným dotazováním, uložení, retence, `_stav.json`
+- `src/dotazy.js`: záloha dotazy pro databáze s virtuální tabulkou, kterou D1 export neumí
 - `src/nahrani.js`: gzip proud do R2 po částech (multipart), bez načtení do paměti
 - `src/retence.js`: co smazat, pražské datum
 - `src/email.js`: upozornění přes Resend
