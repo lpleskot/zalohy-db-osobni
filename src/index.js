@@ -7,6 +7,10 @@ export const POSLEDNI_POKUS = '17 2 * * *';
 
 const json = (data, status = 200) => Response.json(data, { status });
 
+/* Bez tokenu se nic nezálohuje a bez Resend nepřijde ani e-mail o chybě. /stav to musí ukázat,
+   jinak záloha nefunguje potichu (osobní účet bez CF_API_TOKEN, září–říjen 2026). */
+const POTREBNE_SECRETS = ['CF_API_TOKEN', 'RESEND_API_KEY'];
+
 function platnyToken(zadany, spravny) {
   if (!zadany || !spravny) return false;
   const a = new TextEncoder().encode(zadany);
@@ -45,6 +49,8 @@ export default {
     const cesta = `${request.method} ${url.pathname}`;
     if (cesta === 'GET /stav') {
       const stav = vyhodnotStav(await nactiStav(env));
+      const chybi = POTREBNE_SECRETS.filter((nazev) => !env[nazev]);
+      if (chybi.length) Object.assign(stav, { ok: false, chybiNastaveni: chybi });
       return json(stav, stav.ok ? 200 : 503);
     }
     if (cesta === 'POST /zalohovat') {

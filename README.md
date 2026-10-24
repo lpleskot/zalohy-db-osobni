@@ -36,6 +36,8 @@ d1-zalohy/                         bucket (EEUR)
   nebo když selhal celý běh (např. neplatný token). Když je vše v pořádku, e-mail nechodí.
 - `_stav.json` v bucketu a `GET /stav` (pro monitoring, např. status.plegi.cz): `ok`, čas
   posledního běhu a databáze bez zálohy ze dneška nebo včerejška; při problému HTTP 503.
+  Chybějící secret `CF_API_TOKEN` nebo `RESEND_API_KEY` ukáže jako `chybiNastaveni`
+  (bez nich se nezálohuje, nebo nepřijde e-mail o chybě).
 - Logy: dashboard → Workers & Pages → zalohy-db-osobni → Logs.
 - Během exportu databáze **neodpovídá na dotazy**, u malých databází jde o vteřiny. Proto se
   zálohuje v noci, jedna databáze po druhé a v minutě :17, mimo crony projektů spouštěné

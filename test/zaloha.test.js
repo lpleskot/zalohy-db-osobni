@@ -375,6 +375,16 @@ describe('správa přes HTTP', () => {
     expect(r.telo).toMatchObject({ ok: true, databazi: 1, problemy: [] });
   });
 
+  it('GET /stav hlásí chybějící secrets, i když je _stav.json v pořádku', async () => {
+    falesnyUcet({ databaze: [db('a-db')], dumpy: { 'a-db': 'SQL' }, hnedHotovo: true });
+    await zalohujVse(env, { pauzaMs: 0 });
+    expect((await zavolej('/stav', { token: 'test-sprava' })).telo).toMatchObject({ ok: true });
+    const bez = Object.create(env, { CF_API_TOKEN: { value: undefined }, RESEND_API_KEY: { value: undefined } });
+    const r = await zavolej('/stav', { token: 'test-sprava', prostredi: bez });
+    expect(r.status).toBe(503);
+    expect(r.telo).toMatchObject({ ok: false, chybiNastaveni: ['CF_API_TOKEN', 'RESEND_API_KEY'] });
+  });
+
   it('POST /test-email pošle zkušební e-mail', async () => {
     const ucet = falesnyUcet();
     const r = await zavolej('/test-email', { method: 'POST', token: 'test-sprava' });
